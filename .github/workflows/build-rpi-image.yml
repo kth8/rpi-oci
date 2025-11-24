@@ -97,7 +97,7 @@ jobs:
         uses: redhat-actions/buildah-build@v2
         with:
           image: ${{ env.IMAGE_NAME }}
-          tags: ${{ inputs.version_date }}-${{ matrix.arch }}
+          tags: latest-${{ matrix.arch }} ${{ inputs.version_date }}-${{ matrix.arch }}
           platforms: ${{ matrix.platform }}
           containerfiles: |
             ./Containerfile
