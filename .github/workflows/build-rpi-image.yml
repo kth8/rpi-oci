@@ -1,6 +1,7 @@
 name: Build Multi-Arch RPi Images
 
 on:
+  push:
   schedule:
     - cron: '0 4 * * 0'
 
