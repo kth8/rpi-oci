@@ -51,7 +51,8 @@ jobs:
       - name: Install Utilities
         run: sudo apt-get update && sudo apt-get install -y xz-utils
 
-      - id: prep
+      - name: Get Latest Version Info
+        id: get_version
         run: |
           set -e
           RELEASE_NOTES_URL="https://downloads.raspberrypi.com/${{ matrix.slug }}/release_notes.txt"
@@ -63,34 +64,45 @@ jobs:
             exit 1
           fi
           
-          echo "Detected Date: $DATE"
-          
           BASE_URL="https://downloads.raspberrypi.com"
           FULL_URL="$BASE_URL/${{ matrix.slug }}/images/${{ matrix.slug }}-$DATE/$DATE-raspios-${{ env.OS_CODENAME }}-${{ matrix.arch }}-lite.img.xz"
           
-          echo "Downloading: $FULL_URL"
+          echo "Detected Date: $DATE"
+          echo "Target URL: $FULL_URL"
           
-          wget -O rpi.img.xz "$FULL_URL"
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+          echo "url=$FULL_URL" >> $GITHUB_OUTPUT
+
+      - name: Download and Decompress Image
+        run: |
+          echo "Downloading from ${{ steps.get_version.outputs.url }}"
+          wget -q -O rpi.img.xz "${{ steps.get_version.outputs.url }}"
+          
+          echo "Decompressing..."
           unxz rpi.img.xz
+
+      - name: Mount and Create Rootfs Tarball
+        run: |
+          set -e
           
           LOOPDEV=$(sudo losetup -fP --show rpi.img)
+          echo "Image mounted at $LOOPDEV"
           
           mkdir -p mnt_root
           sudo mount ${LOOPDEV}p2 mnt_root
           
           if [ -f mnt_root/etc/ld.so.preload ]; then
+            echo "Disabling ld.so.preload..."
             sudo sed -i 's/^/#/' mnt_root/etc/ld.so.preload
           fi
           
           sudo rm -rf mnt_root/boot/*
-
+          echo "Creating rootfs.tar..."
           sudo tar --numeric-owner -C mnt_root -cf rootfs.tar .
           
           sudo umount mnt_root
           sudo losetup -d $LOOPDEV
           rm rpi.img
-          
-          echo "date=$DATE" >> $GITHUB_OUTPUT
 
       - name: Create Containerfile
         run: |
@@ -100,12 +112,12 @@ jobs:
           CMD ["/bin/bash"]
           EOF
 
-      - name: Build Image (Specific Arch)
+      - name: Build Image
         id: build-image
         uses: redhat-actions/buildah-build@v2
         with:
           image: ${{ env.IMAGE_NAME }}
-          tags: latest-${{ matrix.arch }} ${{ steps.prep.outputs.date }}-${{ env.OS_CODENAME }}-${{ matrix.arch }}
+          tags: latest-${{ matrix.arch }} ${{ steps.get_version.outputs.date }}-${{ env.OS_CODENAME }}-${{ matrix.arch }}
           platforms: ${{ matrix.platform }}
           containerfiles: |
             ./Containerfile
@@ -114,10 +126,10 @@ jobs:
         run: |
           echo "Verifying ${{ matrix.arch }} image..."
           podman run --rm --platform ${{ matrix.platform }} \
-            ${{ env.IMAGE_NAME }}:${{ steps.prep.outputs.date }}-${{ env.OS_CODENAME }}-${{ matrix.arch }} \
-            sh -c "echo 'Success! Arch:' uname -m && cat /etc/os-release"
+            ${{ env.IMAGE_NAME }}:${{ steps.get_version.outputs.date }}-${{ env.OS_CODENAME }}-${{ matrix.arch }} \
+            sh -c "uname -m && cat /etc/os-release"
 
-      - name: Push Specific Arch
+      - name: Push Image
         uses: redhat-actions/push-to-registry@v2
         with:
           image: ${{ steps.build-image.outputs.image }}
