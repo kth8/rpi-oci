@@ -2,6 +2,11 @@ name: Build Multi-Arch RPi Images
 
 on:
   push:
+    branches:
+      - main
+    paths-ignore:
+      - "**.md"
+      - "**.txt"
   schedule:
     - cron: '0 4 * * 0'
 
