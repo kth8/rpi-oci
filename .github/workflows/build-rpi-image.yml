@@ -1,20 +1,13 @@
 name: Build Multi-Arch RPi Images
 
 on:
-  workflow_dispatch:
-    inputs:
-      version_date:
-        description: 'Date of the release (YYYY-MM-DD)'
-        required: true
-        default: '2025-11-24'
-      os_codename:
-        description: 'Debian Codename'
-        required: true
-        default: 'trixie'
+  schedule:
+    - cron: '0 4 * * 0'
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: rpi-os-lite
+  OS_CODENAME: trixie
   IMAGE_REGISTRY_USER: ${{ github.actor }}
   IMAGE_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
 
@@ -24,6 +17,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+
     strategy:
       fail-fast: false
       matrix:
@@ -56,33 +50,46 @@ jobs:
       - name: Install Utilities
         run: sudo apt-get update && sudo apt-get install -y xz-utils
 
-      - name: Extract and Prepare Rootfs
+      - id: prep
         run: |
           set -e
-          BASE_URL="https://downloads.raspberrypi.com"
-          SLUG="${{ matrix.slug }}"
-          DATE="${{ inputs.version_date }}"
-          CODENAME="${{ inputs.os_codename }}"
-          ARCH="${{ matrix.arch }}"
+          RELEASE_NOTES_URL="https://downloads.raspberrypi.com/${{ matrix.slug }}/release_notes.txt"
           
-          FULL_URL="$BASE_URL/$SLUG/images/$SLUG-$DATE/$DATE-raspios-$CODENAME-$ARCH-lite.img.xz"
+          DATE=$(curl -sL "$RELEASE_NOTES_URL" | head -n 1 | awk -F: '{print $1}' | xargs)
+          
+          if [ -z "$DATE" ]; then
+            echo "Error: Could not determine date."
+            exit 1
+          fi
+          
+          echo "Detected Date: $DATE"
+          
+          BASE_URL="https://downloads.raspberrypi.com"
+          FULL_URL="$BASE_URL/${{ matrix.slug }}/images/${{ matrix.slug }}-$DATE/$DATE-raspios-${{ env.OS_CODENAME }}-${{ matrix.arch }}-lite.img.xz"
+          
+          echo "Downloading: $FULL_URL"
           
           wget -O rpi.img.xz "$FULL_URL"
           unxz rpi.img.xz
           
           LOOPDEV=$(sudo losetup -fP --show rpi.img)
+          
           mkdir -p mnt_root
           sudo mount ${LOOPDEV}p2 mnt_root
           
           if [ -f mnt_root/etc/ld.so.preload ]; then
             sudo sed -i 's/^/#/' mnt_root/etc/ld.so.preload
           fi
+          
           sudo rm -rf mnt_root/boot/*
 
           sudo tar --numeric-owner -C mnt_root -cf rootfs.tar .
+          
           sudo umount mnt_root
           sudo losetup -d $LOOPDEV
           rm rpi.img
+          
+          echo "date=$DATE" >> $GITHUB_OUTPUT
 
       - name: Create Containerfile
         run: |
@@ -97,7 +104,7 @@ jobs:
         uses: redhat-actions/buildah-build@v2
         with:
           image: ${{ env.IMAGE_NAME }}
-          tags: latest-${{ matrix.arch }} ${{ inputs.version_date }}-${{ matrix.arch }}
+          tags: latest-${{ matrix.arch }} ${{ steps.prep.outputs.date }}-${{ matrix.arch }}
           platforms: ${{ matrix.platform }}
           containerfiles: |
             ./Containerfile
@@ -106,8 +113,8 @@ jobs:
         run: |
           echo "Verifying ${{ matrix.arch }} image..."
           podman run --rm --platform ${{ matrix.platform }} \
-            ${{ env.IMAGE_NAME }}:${{ inputs.version_date }}-${{ matrix.arch }} \
-            sh -c "echo 'Success! Arch:' && uname -m && cat /etc/os-release"
+            ${{ env.IMAGE_NAME }}:${{ steps.prep.outputs.date }}-${{ matrix.arch }} \
+            sh -c "echo 'Success! Arch:' uname -m && cat /etc/os-release"
 
       - name: Push Specific Arch
         uses: redhat-actions/push-to-registry@v2
