@@ -102,6 +102,13 @@ jobs:
           containerfiles: |
             ./Containerfile
 
+      - name: Verify Image Runs
+        run: |
+          echo "Verifying ${{ matrix.arch }} image..."
+          podman run --rm --platform ${{ matrix.platform }} \
+            ${{ env.IMAGE_NAME }}:${{ inputs.version_date }}-${{ matrix.arch }} \
+            sh -c "echo 'Success! Arch:' && uname -m && cat /etc/os-release"
+
       - name: Push Specific Arch
         uses: redhat-actions/push-to-registry@v2
         with:
